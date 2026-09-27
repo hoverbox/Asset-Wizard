@@ -28,18 +28,61 @@ var message_label: Label
 var folder_dialog: EditorFileDialog
 var overwrite_dialog: ConfirmationDialog
 var heading_label: Label
+var create_new_button: Button
+var use_existing_button: Button
+var existing_assets_view: VBoxContainer
+var new_nodes_view: VBoxContainer
+
+# New Node Setup tab
+var setup_option: OptionButton
+var setup_collision_option: OptionButton
+var setup_mesh_option: OptionButton
+var setup_add_area_check: CheckBox
+var setup_name_edit: LineEdit
+var setup_status_label: Label
 
 
 func setup(editor_plugin: EditorPlugin) -> void:
+	# Configure native/transparency flags before this Window is ever displayed.
+	# Godot rejects force_native changes on an already-visible window.
+	visible = false
 	plugin = editor_plugin
 	title = "Asset Wizard"
-	min_size = Vector2i(520, 500)
-	size = Vector2i(560, 620)
-	unresizable = false
+	min_size = Vector2i(1120, 760)
+	size = Vector2i(1180, 820)
+	unresizable = true
+	_enable_window_transparency()
+	force_native = true
+	borderless = true
+	transparent_bg = true
+	transparent = true
+	visibility_changed.connect(_on_window_visibility_changed)
 	close_requested.connect(hide)
 	_apply_editor_theme()
 	_build_ui()
 	_load_settings()
+
+
+func _enable_window_transparency() -> void:
+	# Native per-pixel transparency needs both the project permission and the window flag.
+	const TRANSPARENCY_SETTING := "display/window/per_pixel_transparency/allowed"
+	if not ProjectSettings.get_setting(TRANSPARENCY_SETTING, false):
+		ProjectSettings.set_setting(TRANSPARENCY_SETTING, true)
+		ProjectSettings.save()
+
+
+func _on_window_visibility_changed() -> void:
+	if visible:
+		# The native window ID is guaranteed to exist once the Window is visible. Applying
+		# the flag here fixes the black clear area seen around the rounded card in the editor.
+		call_deferred("_apply_native_transparency")
+
+
+func _apply_native_transparency() -> void:
+	transparent_bg = true
+	transparent = true
+	if DisplayServer.is_window_transparency_available():
+		DisplayServer.window_set_flag(DisplayServer.WINDOW_FLAG_TRANSPARENT, true, get_window_id())
 
 
 func _apply_editor_theme() -> void:
@@ -51,43 +94,332 @@ func _apply_editor_theme() -> void:
 
 
 func _apply_theme_accents() -> void:
-	if plugin == null or heading_label == null:
-		return
-	var editor_base := plugin.get_editor_interface().get_base_control()
-	if editor_base != null and editor_base.has_theme_color("accent_color", "Editor"):
-		heading_label.add_theme_color_override("font_color", editor_base.get_theme_color("accent_color", "Editor"))
+	pass
 
 
 func _build_ui() -> void:
-	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 16)
-	margin.add_theme_constant_override("margin_right", 16)
-	margin.add_theme_constant_override("margin_top", 16)
-	margin.add_theme_constant_override("margin_bottom", 16)
-	add_child(margin)
+	# The mockup is the layout: a floating rounded card, custom title bar,
+	# overlapping mascot, image title, pill mode buttons, and no inner box.
+	var root := Control.new()
+	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(root)
+
+	var body := PanelContainer.new()
+	body.position = Vector2(72, 54)
+	body.size = Vector2(size.x - 92, size.y - 74)
+	body.add_theme_stylebox_override("panel", _make_window_style())
+	root.add_child(body)
+
+	var body_margin := MarginContainer.new()
+	body_margin.add_theme_constant_override("margin_left", 56)
+	body_margin.add_theme_constant_override("margin_right", 48)
+	body_margin.add_theme_constant_override("margin_top", 72)
+	body_margin.add_theme_constant_override("margin_bottom", 30)
+	body.add_child(body_margin)
 
 	var main := VBoxContainer.new()
-	main.add_theme_constant_override("separation", 10)
-	margin.add_child(main)
+	main.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	main.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	main.add_theme_constant_override("separation", 14)
+	body_margin.add_child(main)
 
-	heading_label = Label.new()
-	heading_label.text = "Asset Wizard"
-	heading_label.add_theme_font_size_override("font_size", 22)
-	_apply_theme_accents()
-	main.add_child(heading_label)
+	# Header content is offset so the mascot can overlap it without covering controls.
+	var hero_margin := MarginContainer.new()
+	hero_margin.add_theme_constant_override("margin_left", 170)
+	main.add_child(hero_margin)
+
+	var hero := VBoxContainer.new()
+	hero.add_theme_constant_override("separation", 10)
+	hero_margin.add_child(hero)
+
+	var title_row := HBoxContainer.new()
+	title_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	title_row.add_theme_constant_override("separation", 10)
+	hero.add_child(title_row)
+
+	var star_left := Label.new()
+	star_left.text = "★"
+	star_left.add_theme_color_override("font_color", Color("ffd21f"))
+	star_left.add_theme_font_size_override("font_size", 34)
+	title_row.add_child(star_left)
+
+	var title_image := TextureRect.new()
+	title_image.custom_minimum_size = Vector2(610, 88)
+	title_image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	title_image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	title_image.texture = load("res://addons/asset_wizard/asset_wizard_title.png") as Texture2D
+	title_row.add_child(title_image)
+
+	var star_right := Label.new()
+	star_right.text = "★"
+	star_right.add_theme_color_override("font_color", Color("ffd21f"))
+	star_right.add_theme_font_size_override("font_size", 34)
+	title_row.add_child(star_right)
+
+	var mode_buttons := HBoxContainer.new()
+	mode_buttons.alignment = BoxContainer.ALIGNMENT_CENTER
+	mode_buttons.add_theme_constant_override("separation", 34)
+	hero.add_child(mode_buttons)
+
+	create_new_button = Button.new()
+	create_new_button.text = "✚   Create New"
+	create_new_button.custom_minimum_size = Vector2(330, 62)
+	create_new_button.add_theme_font_size_override("font_size", 22)
+	create_new_button.pressed.connect(_show_new_nodes)
+	mode_buttons.add_child(create_new_button)
+
+	use_existing_button = Button.new()
+	use_existing_button.text = "▣   Use Existing Assets"
+	use_existing_button.custom_minimum_size = Vector2(390, 62)
+	use_existing_button.add_theme_font_size_override("font_size", 22)
+	use_existing_button.pressed.connect(_show_existing_assets)
+	mode_buttons.add_child(use_existing_button)
+
+	var content := VBoxContainer.new()
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	content.add_theme_constant_override("separation", 8)
+	main.add_child(content)
+
+	_build_existing_assets_tab(content)
+	_build_new_nodes_tab(content)
+	_apply_clean_content_theme(content)
+	_show_new_nodes()
+
+	# Custom chrome lets the actual window participate in the mockup instead of
+	# sitting inside a native OS title bar.
+	var title_bar := PanelContainer.new()
+	title_bar.position = Vector2(210, 54)
+	title_bar.size = Vector2(size.x - 230, 46)
+	title_bar.mouse_default_cursor_shape = Control.CURSOR_MOVE
+	title_bar.gui_input.connect(_on_title_bar_gui_input)
+	var title_style := _make_panel_style(Color("fbfdff"), Color("fbfdff"), 0, 20)
+	title_style.corner_radius_bottom_left = 0
+	title_style.corner_radius_bottom_right = 0
+	title_bar.add_theme_stylebox_override("panel", title_style)
+	root.add_child(title_bar)
+
+	var title_margin := MarginContainer.new()
+	title_margin.add_theme_constant_override("margin_left", 16)
+	title_margin.add_theme_constant_override("margin_right", 10)
+	title_margin.add_theme_constant_override("margin_top", 5)
+	title_margin.add_theme_constant_override("margin_bottom", 5)
+	title_bar.add_child(title_margin)
+
+	var title_controls := HBoxContainer.new()
+	title_controls.add_theme_constant_override("separation", 8)
+	title_margin.add_child(title_controls)
+
+	var title_spacer := Control.new()
+	title_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	title_controls.add_child(title_spacer)
+
+	var minimize_button := Button.new()
+	minimize_button.text = "—"
+	minimize_button.flat = true
+	minimize_button.custom_minimum_size = Vector2(42, 32)
+	minimize_button.add_theme_color_override("font_color", Color("18314f"))
+	minimize_button.add_theme_color_override("font_hover_color", Color("2e73ad"))
+	minimize_button.add_theme_font_size_override("font_size", 20)
+	minimize_button.pressed.connect(_minimize_window)
+	title_controls.add_child(minimize_button)
+
+	var close_button := Button.new()
+	close_button.text = "×"
+	close_button.flat = true
+	close_button.custom_minimum_size = Vector2(42, 32)
+	close_button.add_theme_color_override("font_color", Color("18314f"))
+	close_button.add_theme_color_override("font_hover_color", Color("d83a4e"))
+	close_button.add_theme_font_size_override("font_size", 24)
+	close_button.pressed.connect(hide)
+	title_controls.add_child(close_button)
+
+	# Mascot is intentionally last so it draws over the card and title bar.
+	var wizard := TextureRect.new()
+	wizard.position = Vector2(4, 0)
+	wizard.size = Vector2(300, 300)
+	wizard.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	wizard.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	wizard.texture = load("res://addons/asset_wizard/wizard.png") as Texture2D
+	wizard.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(wizard)
+
+	folder_dialog = EditorFileDialog.new()
+	folder_dialog.file_mode = EditorFileDialog.FILE_MODE_OPEN_DIR
+	folder_dialog.access = EditorFileDialog.ACCESS_RESOURCES
+	folder_dialog.dir_selected.connect(_on_output_folder_selected)
+	add_child(folder_dialog)
+
+	overwrite_dialog = ConfirmationDialog.new()
+	overwrite_dialog.title = "Overwrite existing scenes?"
+	overwrite_dialog.confirmed.connect(_create_filesystem_scenes)
+	add_child(overwrite_dialog)
+
+
+func _on_title_bar_gui_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		DisplayServer.window_start_drag(get_window_id())
+
+
+func _minimize_window() -> void:
+	mode = Window.MODE_MINIMIZED
+
+
+func _make_window_style() -> StyleBoxFlat:
+	var style := _make_panel_style(Color("fbfdff"), Color("2599e6"), 4, 28)
+	style.shadow_color = Color(0.02, 0.12, 0.25, 0.30)
+	style.shadow_size = 12
+	style.shadow_offset = Vector2(0, 6)
+	return style
+
+
+func _apply_clean_content_theme(node: Node) -> void:
+	if node is Label:
+		var label := node as Label
+		label.add_theme_color_override("font_color", Color("1f3c63"))
+		label.add_theme_font_size_override("font_size", 18)
+	elif node is CheckBox:
+		var check := node as CheckBox
+		check.add_theme_color_override("font_color", Color("1f3c63"))
+		check.add_theme_color_override("font_hover_color", Color("1f3c63"))
+		check.add_theme_color_override("font_pressed_color", Color("1f3c63"))
+		check.add_theme_font_size_override("font_size", 17)
+	elif node is OptionButton or node is LineEdit or node is SpinBox:
+		_style_input(node as Control)
+	elif node is HSeparator:
+		var separator := StyleBoxLine.new()
+		separator.color = Color("88cef4")
+		separator.thickness = 2
+		(node as HSeparator).add_theme_stylebox_override("separator", separator)
+	for child in node.get_children():
+		_apply_clean_content_theme(child)
+
+
+func _style_input(control: Control) -> void:
+	var normal := _make_panel_style(Color("223f65"), Color("223f65"), 0, 16)
+	var hover := _make_panel_style(Color("2d527d"), Color("2d527d"), 0, 16)
+	var focus := _make_panel_style(Color("223f65"), Color("52c1ff"), 2, 16)
+	for style in [normal, hover, focus]:
+		style.content_margin_left = 16
+		style.content_margin_right = 16
+		style.content_margin_top = 8
+		style.content_margin_bottom = 8
+	control.custom_minimum_size.y = 44
+	control.add_theme_stylebox_override("normal", normal)
+	control.add_theme_stylebox_override("hover", hover)
+	control.add_theme_stylebox_override("focus", focus)
+	control.add_theme_color_override("font_color", Color("ffffff"))
+	control.add_theme_color_override("font_hover_color", Color("ffffff"))
+	control.add_theme_color_override("font_focus_color", Color("ffffff"))
+	control.add_theme_color_override("font_placeholder_color", Color("91a6c2"))
+	control.add_theme_font_size_override("font_size", 17)
+
+
+func _make_panel_style(background: Color, border: Color, border_width: int, radius: int) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = background
+	style.border_color = border
+	style.set_border_width_all(border_width)
+	style.set_corner_radius_all(radius)
+	return style
+
+
+func _rounded_button_style(background: Color, border: Color = Color.TRANSPARENT, border_width: int = 0, radius: int = 24) -> StyleBoxFlat:
+	var style := _make_panel_style(background, border, border_width, radius)
+	style.content_margin_left = 22
+	style.content_margin_right = 22
+	style.content_margin_top = 12
+	style.content_margin_bottom = 12
+	return style
+
+
+func _button_style(background: Color, border: Color, shadow: Color, radius := 26) -> StyleBoxFlat:
+	var style := _rounded_button_style(background, border, 2, radius)
+	style.shadow_color = shadow
+	style.shadow_size = 6
+	style.shadow_offset = Vector2(0, 4)
+	return style
+
+
+func _apply_mode_button_styles() -> void:
+	if create_new_button == null or use_existing_button == null:
+		return
+
+	var purple := Color("7654e8")
+	var purple_hover := Color("8869f2")
+	var blue := Color("3979b7")
+	var blue_hover := Color("478cc9")
+	var inactive := Color("d8effc")
+	var inactive_hover := Color("c8e8fa")
+
+	var new_selected := new_nodes_view != null and new_nodes_view.visible
+	create_new_button.add_theme_stylebox_override("normal", _button_style(purple if new_selected else inactive, Color("a98cff") if new_selected else Color("b8e1f7"), Color(0.25, 0.15, 0.55, 0.25)))
+	create_new_button.add_theme_stylebox_override("hover", _button_style(purple_hover if new_selected else inactive_hover, Color("bea8ff") if new_selected else Color("9fd6f5"), Color(0.25, 0.15, 0.55, 0.30)))
+	create_new_button.add_theme_stylebox_override("pressed", _button_style(purple_hover, Color("c9b8ff"), Color(0.25, 0.15, 0.55, 0.20)))
+	create_new_button.add_theme_color_override("font_color", Color.WHITE if new_selected else Color("24466e"))
+	create_new_button.add_theme_color_override("font_hover_color", Color.WHITE if new_selected else Color("24466e"))
+	create_new_button.add_theme_color_override("font_pressed_color", Color.WHITE)
+
+	var existing_selected := existing_assets_view != null and existing_assets_view.visible
+	use_existing_button.add_theme_stylebox_override("normal", _button_style(blue if existing_selected else inactive, Color("71b7e9") if existing_selected else Color("b8e1f7"), Color(0.08, 0.25, 0.45, 0.22)))
+	use_existing_button.add_theme_stylebox_override("hover", _button_style(blue_hover if existing_selected else inactive_hover, Color("8bc9f0") if existing_selected else Color("9fd6f5"), Color(0.08, 0.25, 0.45, 0.28)))
+	use_existing_button.add_theme_stylebox_override("pressed", _button_style(blue_hover, Color("9dd3f4"), Color(0.08, 0.25, 0.45, 0.20)))
+	use_existing_button.add_theme_color_override("font_color", Color.WHITE if existing_selected else Color("24466e"))
+	use_existing_button.add_theme_color_override("font_hover_color", Color.WHITE if existing_selected else Color("24466e"))
+	use_existing_button.add_theme_color_override("font_pressed_color", Color.WHITE)
+
+
+func _style_primary_action(button: Button, purple := true) -> void:
+	var base := Color("6848e8") if purple else Color("2e73ad")
+	var hover := Color("7e60f2") if purple else Color("3c86c2")
+	var border := Color("9d86ff") if purple else Color("6eb9eb")
+	var shadow := Color(0.20, 0.12, 0.55, 0.28) if purple else Color(0.05, 0.24, 0.45, 0.25)
+	button.custom_minimum_size.y = 56
+	button.add_theme_stylebox_override("normal", _button_style(base, border, shadow, 24))
+	button.add_theme_stylebox_override("hover", _button_style(hover, border.lightened(0.12), shadow, 24))
+	button.add_theme_stylebox_override("pressed", _button_style(hover.darkened(0.05), border, shadow, 24))
+	button.add_theme_color_override("font_color", Color.WHITE)
+	button.add_theme_color_override("font_hover_color", Color.WHITE)
+	button.add_theme_color_override("font_pressed_color", Color.WHITE)
+	button.add_theme_font_size_override("font_size", 20)
+
+func _show_new_nodes() -> void:
+	if new_nodes_view != null:
+		new_nodes_view.visible = true
+	if existing_assets_view != null:
+		existing_assets_view.visible = false
+	_apply_mode_button_styles()
+
+
+func _show_existing_assets() -> void:
+	if new_nodes_view != null:
+		new_nodes_view.visible = false
+	if existing_assets_view != null:
+		existing_assets_view.visible = true
+	_apply_mode_button_styles()
+
+
+func _build_existing_assets_tab(parent: Container) -> void:
+	var tab := VBoxContainer.new()
+	tab.name = "Existing Assets"
+	tab.add_theme_constant_override("separation", 12)
+	tab.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	parent.add_child(tab)
+	existing_assets_view = tab
 
 	status_label = Label.new()
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	main.add_child(status_label)
+	tab.add_child(status_label)
 
-	main.add_child(HSeparator.new())
+	tab.add_child(HSeparator.new())
 
-	root_option = _add_option_row(main, "Root node")
+	root_option = _add_option_row(tab, "Root node")
 	for root_name in ["StaticBody3D", "CharacterBody3D", "RigidBody3D", "Area3D", "AnimatableBody3D", "VehicleBody3D"]:
 		root_option.add_item(root_name)
 	root_option.item_selected.connect(_on_setting_changed)
 
-	collision_option = _add_option_row(main, "Collision shape")
+	collision_option = _add_option_row(tab, "Collision shape")
 	for shape_name in [
 		"BoxShape3D",
 		"SphereShape3D",
@@ -102,22 +434,22 @@ func _build_ui() -> void:
 		collision_option.add_item(shape_name)
 	collision_option.item_selected.connect(_on_collision_changed)
 
-	collision_mode_option = _add_option_row(main, "Multiple meshes")
+	collision_mode_option = _add_option_row(tab, "Multiple meshes")
 	collision_mode_option.add_item("One combined collision", CollisionMode.COMBINED)
 	collision_mode_option.add_item("One collision per mesh", CollisionMode.PER_MESH)
 	collision_mode_option.item_selected.connect(_on_setting_changed)
 
-	padding_spin = _add_spin_row(main, "Padding", 0.0, 1000.0, 0.01, 0.0)
+	padding_spin = _add_spin_row(tab, "Padding", 0.0, 1000.0, 0.01, 0.0)
 	padding_spin.suffix = " m"
 	padding_spin.value_changed.connect(_on_setting_changed)
 
-	size_scale_spin = _add_spin_row(main, "Size multiplier", 0.01, 100.0, 0.01, 1.0)
+	size_scale_spin = _add_spin_row(tab, "Size multiplier", 0.01, 100.0, 0.01, 1.0)
 	size_scale_spin.value_changed.connect(_on_setting_changed)
 
 	output_row = HBoxContainer.new()
 	var output_label := Label.new()
 	output_label.text = "Output folder"
-	output_label.custom_minimum_size.x = 150
+	output_label.custom_minimum_size.x = 145
 	output_row.add_child(output_label)
 	output_edit = LineEdit.new()
 	output_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -128,15 +460,15 @@ func _build_ui() -> void:
 	browse_button.text = "Browse"
 	browse_button.pressed.connect(_browse_output)
 	output_row.add_child(browse_button)
-	main.add_child(output_row)
+	tab.add_child(output_row)
 
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	main.add_child(spacer)
+	tab.add_child(spacer)
 
 	message_label = Label.new()
 	message_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	main.add_child(message_label)
+	tab.add_child(message_label)
 
 	var buttons := HBoxContainer.new()
 	buttons.alignment = BoxContainer.ALIGNMENT_END
@@ -147,26 +479,78 @@ func _build_ui() -> void:
 	create_button = Button.new()
 	create_button.text = "Create"
 	create_button.pressed.connect(_on_create_pressed)
+	_style_primary_action(create_button, false)
 	buttons.add_child(create_button)
-	main.add_child(buttons)
+	tab.add_child(buttons)
 
-	folder_dialog = EditorFileDialog.new()
-	folder_dialog.file_mode = EditorFileDialog.FILE_MODE_OPEN_DIR
-	folder_dialog.access = EditorFileDialog.ACCESS_RESOURCES
-	folder_dialog.dir_selected.connect(_on_output_folder_selected)
-	add_child(folder_dialog)
 
-	overwrite_dialog = ConfirmationDialog.new()
-	overwrite_dialog.title = "Overwrite existing scenes?"
-	overwrite_dialog.confirmed.connect(_create_filesystem_scenes)
-	add_child(overwrite_dialog)
+func _build_new_nodes_tab(parent: Container) -> void:
+	var tab := VBoxContainer.new()
+	tab.name = "New Nodes"
+	tab.add_theme_constant_override("separation", 12)
+	tab.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	parent.add_child(tab)
+	new_nodes_view = tab
+
+	var help := Label.new()
+	help.text = "Create a ready-to-use 3D physics setup under the selected node, or under the scene root if nothing is selected."
+	help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tab.add_child(help)
+	tab.add_child(HSeparator.new())
+
+	setup_option = _add_option_row(tab, "Setup")
+	for item in ["CharacterBody3D", "RigidBody3D", "StaticBody3D", "Area3D"]:
+		setup_option.add_item(item)
+
+	setup_collision_option = _add_option_row(tab, "Collision Shape")
+	for item in ["Capsule", "Box", "Sphere", "Cylinder"]:
+		setup_collision_option.add_item(item)
+
+	setup_mesh_option = _add_option_row(tab, "Mesh")
+	for item in ["Capsule", "Box", "Sphere", "Cylinder"]:
+		setup_mesh_option.add_item(item)
+
+	var name_row := HBoxContainer.new()
+	var name_label := Label.new()
+	name_label.text = "Root Name"
+	name_label.custom_minimum_size.x = 145
+	name_row.add_child(name_label)
+	setup_name_edit = LineEdit.new()
+	setup_name_edit.placeholder_text = "Leave blank for default"
+	setup_name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_row.add_child(setup_name_edit)
+	tab.add_child(name_row)
+
+	setup_add_area_check = CheckBox.new()
+	setup_add_area_check.text = "Add child Area3D + CollisionShape3D for collision detection testing"
+	tab.add_child(setup_add_area_check)
+
+	var note := Label.new()
+	note.text = "Area3D setups already include their own CollisionShape3D, so the extra detection Area3D option is ignored."
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.modulate.a = 0.75
+	tab.add_child(note)
+
+	var spacer := Control.new()
+	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	tab.add_child(spacer)
+
+	setup_status_label = Label.new()
+	setup_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tab.add_child(setup_status_label)
+
+	var button := Button.new()
+	button.text = "Create Node Setup"
+	button.pressed.connect(_create_node_setup)
+	_style_primary_action(button, true)
+	tab.add_child(button)
 
 
 func _add_option_row(parent: VBoxContainer, label_text: String) -> OptionButton:
 	var row := HBoxContainer.new()
 	var label := Label.new()
 	label.text = label_text
-	label.custom_minimum_size.x = 150
+	label.custom_minimum_size.x = 145
 	row.add_child(label)
 	var option := OptionButton.new()
 	option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -179,7 +563,7 @@ func _add_spin_row(parent: VBoxContainer, label_text: String, minimum: float, ma
 	var row := HBoxContainer.new()
 	var label := Label.new()
 	label.text = label_text
-	label.custom_minimum_size.x = 150
+	label.custom_minimum_size.x = 145
 	row.add_child(label)
 	var spin := SpinBox.new()
 	spin.min_value = minimum
@@ -636,6 +1020,109 @@ func _save_settings() -> void:
 	config.set_value("builder", "size_scale", size_scale_spin.value)
 	config.set_value("builder", "output", output_edit.text)
 	config.save(SETTINGS_PATH)
+
+
+func _create_node_setup() -> void:
+	var scene_root := plugin.get_editor_interface().get_edited_scene_root()
+	if scene_root == null:
+		_set_setup_status("Open or create a scene first.", true)
+		return
+
+	var parent := _get_node_setup_parent(scene_root)
+	var setup_name := setup_option.get_item_text(setup_option.selected)
+	var root := _make_setup_root(setup_name)
+	if root == null:
+		_set_setup_status("Could not create the selected setup.", true)
+		return
+
+	var requested_name := setup_name
+	if not setup_name_edit.text.strip_edges().is_empty():
+		requested_name = setup_name_edit.text.strip_edges()
+	root.name = _unique_child_name(parent, requested_name)
+
+	var collision := CollisionShape3D.new()
+	collision.name = "CollisionShape3D"
+	collision.shape = _make_setup_collision_shape(setup_collision_option.get_item_text(setup_collision_option.selected))
+
+	var mesh_instance: MeshInstance3D = null
+	if not root is Area3D:
+		mesh_instance = MeshInstance3D.new()
+		mesh_instance.name = "MeshInstance3D"
+		mesh_instance.mesh = _make_setup_mesh(setup_mesh_option.get_item_text(setup_mesh_option.selected))
+
+	var detection_area: Area3D = null
+	var detection_collision: CollisionShape3D = null
+	if not root is Area3D and setup_add_area_check.button_pressed:
+		detection_area = Area3D.new()
+		detection_area.name = "DetectionArea3D"
+		detection_collision = CollisionShape3D.new()
+		detection_collision.name = "CollisionShape3D"
+		detection_collision.shape = _make_setup_collision_shape(setup_collision_option.get_item_text(setup_collision_option.selected))
+
+	var undo_redo := plugin.get_undo_redo()
+	undo_redo.create_action("Create Asset Wizard Node Setup")
+	undo_redo.add_do_method(parent, "add_child", root, true)
+	undo_redo.add_do_method(root, "set_owner", scene_root)
+	undo_redo.add_do_method(root, "add_child", collision, true)
+	undo_redo.add_do_method(collision, "set_owner", scene_root)
+	if mesh_instance != null:
+		undo_redo.add_do_method(root, "add_child", mesh_instance, true)
+		undo_redo.add_do_method(mesh_instance, "set_owner", scene_root)
+	if detection_area != null:
+		undo_redo.add_do_method(root, "add_child", detection_area, true)
+		undo_redo.add_do_method(detection_area, "set_owner", scene_root)
+		undo_redo.add_do_method(detection_area, "add_child", detection_collision, true)
+		undo_redo.add_do_method(detection_collision, "set_owner", scene_root)
+	undo_redo.add_do_method(plugin.get_editor_interface().get_selection(), "clear")
+	undo_redo.add_do_method(plugin.get_editor_interface().get_selection(), "add_node", root)
+
+	if detection_collision != null:
+		undo_redo.add_undo_method(detection_area, "remove_child", detection_collision)
+	if detection_area != null:
+		undo_redo.add_undo_method(root, "remove_child", detection_area)
+	if mesh_instance != null:
+		undo_redo.add_undo_method(root, "remove_child", mesh_instance)
+	undo_redo.add_undo_method(root, "remove_child", collision)
+	undo_redo.add_undo_method(parent, "remove_child", root)
+	undo_redo.commit_action()
+
+	_set_setup_status("Created %s under %s. Use Undo to reverse it." % [root.name, parent.name], false)
+
+
+func _get_node_setup_parent(scene_root: Node) -> Node:
+	var selected := plugin.get_editor_interface().get_selection().get_selected_nodes()
+	if selected.is_empty():
+		return scene_root
+	return selected[0]
+
+
+func _make_setup_root(type_name: String) -> Node3D:
+	match type_name:
+		"CharacterBody3D": return CharacterBody3D.new()
+		"RigidBody3D": return RigidBody3D.new()
+		"Area3D": return Area3D.new()
+		_: return StaticBody3D.new()
+
+
+func _make_setup_collision_shape(shape_name: String) -> Shape3D:
+	match shape_name:
+		"Box": return BoxShape3D.new()
+		"Sphere": return SphereShape3D.new()
+		"Cylinder": return CylinderShape3D.new()
+		_: return CapsuleShape3D.new()
+
+
+func _make_setup_mesh(mesh_name: String) -> PrimitiveMesh:
+	match mesh_name:
+		"Box": return BoxMesh.new()
+		"Sphere": return SphereMesh.new()
+		"Cylinder": return CylinderMesh.new()
+		_: return CapsuleMesh.new()
+
+
+func _set_setup_status(message: String, is_error: bool) -> void:
+	setup_status_label.text = message
+	setup_status_label.modulate = Color(1.0, 0.45, 0.45) if is_error else Color(0.65, 1.0, 0.65)
 
 
 func _select_option_text(option: OptionButton, text: String) -> void:
